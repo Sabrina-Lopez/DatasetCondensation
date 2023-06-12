@@ -648,4 +648,3 @@ AUGMENT_FNS = {
     'scale': [rand_scale],
     'rotate': [rand_rotate],
 }
-

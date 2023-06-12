@@ -6,6 +6,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torchvision.utils import save_image
+from torch.autograd import Variable
+from torch.nn import CrossEntropyLoss
+import torch.nn.functional as F
+from torch.nn.functional import l1_loss, mse_loss
 from utils import get_loops, get_dataset, get_network, get_eval_pool, evaluate_synset, get_daparam, match_loss, get_time, TensorDataset, epoch, DiffAugment, ParamDiffAug
 
 
@@ -29,6 +33,7 @@ def main():
     parser.add_argument('--data_path', type=str, default='data', help='dataset path')
     parser.add_argument('--save_path', type=str, default='result', help='path to save results')
     parser.add_argument('--dis_metric', type=str, default='ours', help='distance metric')
+    parser.add_argument('--regular_mode', type=str, default='none', help='type of regularization technique') # none: no extra regularization, l1: L1 regularization, l2: L2 regularization, ecstatic: ecstatic net regularization, cross_entropy: cross-entropy loss
 
     args = parser.parse_args()
     args.method = 'DM'
@@ -136,12 +141,12 @@ def main():
 
 
             ''' Train synthetic data '''
-            net = get_network(args.model, channel, num_classes, im_size).to(args.device) # get a random model
+            net = get_network(args.model, channel, num_classes, im_size).to(args.device) # Get a random model
             net.train()
             for param in list(net.parameters()):
                 param.requires_grad = False
 
-            embed = net.module.embed if torch.cuda.device_count() > 1 else net.embed # for GPU parallel
+            embed = net.module.embed if torch.cuda.device_count() > 1 else net.embed # For GPU parallel
 
             loss_avg = 0
 
@@ -155,10 +160,38 @@ def main():
                     if args.dsa:
                         seed = int(time.time() * 1000) % 100000
                         img_real = DiffAugment(img_real, args.dsa_strategy, seed=seed, param=args.dsa_param)
+                        
                         img_syn = DiffAugment(img_syn, args.dsa_strategy, seed=seed, param=args.dsa_param)
 
                     output_real = embed(img_real).detach()
                     output_syn = embed(img_syn)
+                    
+                    # Apply interchangeable regularization functions
+                    if args.regular_mode == 'l1':
+                        # Apply L1 regularization
+                        loss += l1_loss(torch.mean(output_real, dim=0), torch.mean(output_syn, dim=0))
+                        
+                    elif args.regular_mode == 'l2':
+                        # Apply L2 regularization
+                        loss += mse_loss(torch.mean(output_real, dim=0), torch.mean(output_syn, dim=0))
+                        
+                    elif args.regular_mode == 'ecstatic':
+                        # Apply ecstatic net regularization
+                        ecstatic_loss = F.kl_div(F.log_softmax(output_syn, dim=1), F.softmax(output_real, dim=1), reduction='batchmean')
+                        loss += ecstatic_loss
+                    
+                    elif args.regular_mode == 'cross_entropy':
+                        # Apply cross-entropy loss regularization
+                        criterion = CrossEntropyLoss()
+                        labels = torch.tensor([c] * args.ipc, dtype=torch.long, device=args.device)
+                        loss += criterion(output_syn, labels)
+                        
+                    elif args.regular_mode == 'none':
+                        # Apply no new regularization
+                        pass
+                        
+                    else:
+                        raise ValueError("Invalid regularization mode: " + args.regular_mode)
 
                     loss += torch.sum((torch.mean(output_real, dim=0) - torch.mean(output_syn, dim=0))**2)
 
@@ -185,8 +218,7 @@ def main():
                 output_syn = embed(images_syn_all)
 
                 loss += torch.sum((torch.mean(output_real.reshape(num_classes, args.batch_real, -1), dim=1) - torch.mean(output_syn.reshape(num_classes, args.ipc, -1), dim=1))**2)
-
-
+                                
 
             optimizer_img.zero_grad()
             loss.backward()
