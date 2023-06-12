@@ -33,8 +33,7 @@ def main():
     parser.add_argument('--data_path', type=str, default='data', help='dataset path')
     parser.add_argument('--save_path', type=str, default='result', help='path to save results')
     parser.add_argument('--dis_metric', type=str, default='ours', help='distance metric')
-    parser.add_argument('--regular_mode', type=str, default='none', help='type of regularization technique') # none: no extra regularization, l1: L1 regularization, l2: L2 regularization, ecstatic: ecstatic net regularization, cross_entropy: cross-entropy loss
-
+    
     args = parser.parse_args()
     args.method = 'DM'
     args.outer_loop, args.inner_loop = get_loops(args.ipc)
@@ -165,33 +164,6 @@ def main():
 
                     output_real = embed(img_real).detach()
                     output_syn = embed(img_syn)
-                    
-                    # Apply interchangeable regularization functions
-                    if args.regular_mode == 'l1':
-                        # Apply L1 regularization
-                        loss += l1_loss(torch.mean(output_real, dim=0), torch.mean(output_syn, dim=0))
-                        
-                    elif args.regular_mode == 'l2':
-                        # Apply L2 regularization
-                        loss += mse_loss(torch.mean(output_real, dim=0), torch.mean(output_syn, dim=0))
-                        
-                    elif args.regular_mode == 'ecstatic':
-                        # Apply ecstatic net regularization
-                        ecstatic_loss = F.kl_div(F.log_softmax(output_syn, dim=1), F.softmax(output_real, dim=1), reduction='batchmean')
-                        loss += ecstatic_loss
-                    
-                    elif args.regular_mode == 'cross_entropy':
-                        # Apply cross-entropy loss regularization
-                        criterion = CrossEntropyLoss()
-                        labels = torch.tensor([c] * args.ipc, dtype=torch.long, device=args.device)
-                        loss += criterion(output_syn, labels)
-                        
-                    elif args.regular_mode == 'none':
-                        # Apply no new regularization
-                        pass
-                        
-                    else:
-                        raise ValueError("Invalid regularization mode: " + args.regular_mode)
 
                     loss += torch.sum((torch.mean(output_real, dim=0) - torch.mean(output_syn, dim=0))**2)
 
